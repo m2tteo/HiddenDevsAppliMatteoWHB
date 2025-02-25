@@ -1,0 +1,325 @@
+-- Services
+local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+--Variables
+local Units = ReplicatedStorage.Units
+local player = game:GetService("Players").LocalPlayer
+local mouse = player:GetMouse()
+local UnitData = require(ReplicatedStorage.Common.UnitsData)
+local PlayerGui = player.PlayerGui
+local UnitSelection = PlayerGui:WaitForChild("UnitSelection")
+local UnitFrame = UnitSelection:WaitForChild("Frame")
+local UnitMobile = UnitSelection:WaitForChild("MobilePlacing")
+local heartBeatConnection
+local rotationUnit = 90
+local Libraries = ReplicatedStorage.Libraries
+local NoteModule = require(Libraries.NoteModule)
+local Remotes = ReplicatedStorage.Remotes
+local PlaceEvent = Remotes.PlaceUnit
+local player_units = {}
+local currentSphere = nil
+local currentCone = nil
+local rangeDebounce = false
+-- Function to handle unit UI.
+local function resetViewport(viewportframe: ViewportFrame)
+	viewportframe.CurrentCamera = nil
+	for i, child in pairs(viewportframe.WorldModel:GetChildren()) do
+		child:Destroy()
+	end
+end
+local function loadViewport(v: StringValue, viewportFrame: ViewportFrame, priceText)
+	if v.Value == nil or v.Value == "" then return end
+	if not Units[v.Value] then return end
+	local unit_name = v.Value
+	local unit_data = UnitData[unit_name]
+	local id = unit_data["Animations"]["PortIdle"]
+	resetViewport(viewportFrame)
+	local unit = Units[unit_name]:Clone()
+	unit.Parent = viewportFrame.WorldModel
+	local cam = Instance.new("Camera", viewportFrame.WorldModel)
+	local offset = Vector3.new(0, -0.25, -0.95) 
+	local lookAt = unit.Head.Position
+	cam.CFrame = CFrame.new(unit.Head.Position + offset, lookAt)
+	viewportFrame.CurrentCamera = cam
+	local animator = unit.Humanoid.Animator
+	local animv = Instance.new("Animation")
+	animv.Name = v.Value
+	animv.AnimationId = "rbxassetid://"..id
+	local anim = animator:LoadAnimation(animv)
+	anim.Looped = true
+	anim:Play()
+	priceText.Text = "$"..unit_data["Price"]
+end
+-- All we do is, if the part that the unit wants to place on is the path, or if it's __NOT__ the type of the unit (Cliff or ground), then we return false = cant place there.
+local function checkAvailabilty(part: Part)
+	local unit = workspace.Preview
+	local unit_name = unit:GetAttribute("Unit")
+	local unit_data = UnitData[unit_name]
+	if part.Parent.Name == "Path" or part.Parent.Name ~= unit_data["Type"] then
+		return false
+	elseif part.Parent.Name == unit_data["Type"] then
+		return true
+	end
+end
+--Detects if player is on mobile for mobile support. (If they click their screen, another ui pops up with place, rotate, cancel.)
+local function IsOnTouch()
+	if UserInputService.TouchEnabled then
+		return true
+	else
+		return false
+	end
+end
+--Destroy preview and other things with it.
+local function destroyPreview()
+	if workspace:FindFirstChild("Preview") then
+		local preview = workspace:FindFirstChild("Preview")
+		local map = workspace.Map
+		preview:Destroy()
+		map.FakePath.Transparency = 1
+		for i, v in pairs(map.FakeCliffs:GetChildren()) do
+			v.Transparency = 1
+		end
+	end
+end
+--toggle property inside a model, we loop through all __baseparts__ in it, then turn a property into a desired state.
+local function toggleProperty(model: Model, property: string, state: boolean)
+	for _, part in ipairs(model:GetChildren()) do
+		if part:IsA("BasePart") then
+			part[property] = state
+		end
+	end
+end
+--set collision group, helpful in this case, doing the same as above (looping), but changing the collision group instead.
+local function setCollisionGroup(model: Model, collisiongroup: string)
+	for _, part in ipairs(model:GetChildren()) do
+		if part:IsA("BasePart") then
+			part.CollisionGroup = collisiongroup
+		end
+	end
+end
+-- raycast, we give as parametres "exclude", which will be used in the raycast params
+local function ray_cast(exclude)
+	local pos = UserInputService:GetMouseLocation()
+	local ray = workspace.CurrentCamera:ViewportPointToRay(pos.X, pos.Y) --mouse ray
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = {exclude}
+	local result = workspace:Raycast(ray.Origin, ray.Direction * 100, params)
+	return result
+end
+-- Two functions, cone & sphere, why are they different functions? We do two diff things in them, we both use cylinderhandleardonment, however
+--In one, we simply set the radius, in the other one we calculate the angle, and so then the cframe.
+local function createSphereRange(unit, unit_name)
+	local unit_data = UnitData[unit_name]
+	local range = unit_data["Upgrades"][1]["Range"]
+	local sphereHandleBlaBla = Instance.new("CylinderHandleAdornment")
+	sphereHandleBlaBla.Color3 = Color3.new(255,255,255)
+	sphereHandleBlaBla.Angle = 360
+	local X_Rot = math.rad(-90)
+	local Y_Rot = math.rad( 90 )
+	sphereHandleBlaBla.CFrame = CFrame.fromEulerAnglesYXZ( X_Rot, Y_Rot, 0 )
+	sphereHandleBlaBla.Radius = range
+	sphereHandleBlaBla.Transparency = 0.9
+	sphereHandleBlaBla.Adornee = unit.PrimaryPart
+	sphereHandleBlaBla.Parent = unit
+	return sphereHandleBlaBla	
+end
+local function createConeHandleRange(unit, unit_name)
+	local unit_data = UnitData[unit_name]
+	local range = unit_data["Upgrades"][1]["Range"]
+	local ConeHandleAdornment = Instance.new("CylinderHandleAdornment")
+	ConeHandleAdornment.Color3 = Color3.new(255,255,255)
+	ConeHandleAdornment.Radius = range
+	ConeHandleAdornment.Angle = 55 * 2
+	local X_Rot = math.rad(-90)
+	local Y_Rot = math.rad( 90 - 55 ) -- why 55? because it's the "angle " of the cone range you could say it like that.
+	ConeHandleAdornment.CFrame = CFrame.fromEulerAnglesYXZ( X_Rot, Y_Rot, 0 )
+	ConeHandleAdornment.Transparency = 0.9
+	ConeHandleAdornment.Adornee = unit.PrimaryPart
+	ConeHandleAdornment.Parent = unit
+	return ConeHandleAdornment
+end
+-- Create preview.
+local function createPreview(unit_name)
+	local unit = Units[unit_name]:Clone() -- We get all the unit data
+	local unit_data = UnitData[unit_name]
+	local unit_type = unit_data["Type"]
+	local firstAttack = unit_data["Upgrades"][1]["Attack"]
+	local map = workspace.Map
+	unit.Name = "Preview"
+	unit.Parent = workspace
+	unit:SetAttribute("Unit", unit_name) -- Set attribute for later
+	setCollisionGroup(unit, "Unit") -- Use function above
+	toggleProperty(unit, "CanCollide", false) --Use function ab ove
+	if firstAttack == "Cone" then -- Detect the __first__ attack. Since this is only in placing, there's no need to track upgrade since it will be one anyways.
+		local cone = createConeHandleRange(unit, unit_name)
+		cone.Name = "Range"
+	elseif firstAttack == "Beam" then -- A beam attack is basically where its circular. A cone attack has a cone range infront of the unit.
+		local sphere = createSphereRange(unit, unit_name)
+		sphere.Name = "Range"
+	end
+	UnitMobile.Visible = IsOnTouch() -- Function above.
+	map.FakePath.Transparency = 0.5
+	for i, v in pairs(map.FakeCliffs:GetChildren()) do -- Loop through the "fake cliffs", instead of changing the color of an actual part and then having to log it,
+		-- All we can do is create a fake part above the cliffs, and just make them transparent or not.
+		if unit_type == "Cliff" then
+			v.Transparency = 0.9
+			v.Color = Color3.new(0.101961, 1, 0)
+		else
+			v.Transparency = 0.9
+			v.Color = Color3.new(1, 0, 0)
+		end
+	end
+end
+local function rotateUnit() -- Rotate unit and uses tween service to make it smooth.
+	local unit = workspace.Preview
+	local goalCFrame = unit.HumanoidRootPart.CFrame * CFrame.Angles(0, math.rad(rotationUnit), 0)
+	local info = TweenInfo.new(
+		.01,
+		Enum.EasingStyle.Linear,
+		Enum.EasingDirection.InOut
+	)
+	local tween = TweenService:Create(unit.HumanoidRootPart, info, {CFrame = goalCFrame}):Play()
+end
+local function movePreview()
+	local unit = workspace.Preview
+	local raycast_results = ray_cast({unit, player.Character}) -- First, we get raycast reulsts.
+	if raycast_results and raycast_results.Instance then -- If the player isnt aiming at the sky, (so then, no instance) then we continue
+		local canPlace = checkAvailabilty(raycast_results.Instance) -- We check if the player can place it here.
+		local range = unit.Range -- grabs the circle, or cone.
+		toggleProperty(unit, "Transparency", 0.5)
+		range.Color3 = Color3.new(1, 1, 1)
+		local m_x = raycast_results.Position.X -- Gets all pos.
+		local m_y = raycast_results.Position.Y
+		local m_z = raycast_results.Position.Z
+		local goalPosition = Vector3.new(m_x, m_y + (unit.HumanoidRootPart.Size.Y * 1.5), m_z) -- Basically what we do on the y axis of this, is to make sure that the unit does not spawn through the ground, but actually has its legs standing on it.
+		local currentOrientation = unit.HumanoidRootPart.CFrame - unit.HumanoidRootPart.Position -- grabs the orientation, to create a cframe
+		local goalCFrame = CFrame.new(goalPosition) * currentOrientation -- new cframe. cannot do + or - on cframes, its only * (x)
+		unit.HumanoidRootPart.CFrame = goalCFrame 
+		if not canPlace then -- if you CANT place it, first we set the range to 1,1,1 (or 255,255,255 or white) however if you cannot place it turns red.
+			local range = unit.Range
+			range.Color3 = Color3.new(1, 0.215686, 0.215686)
+		end
+	else
+		toggleProperty(unit, "Transparency", 1) -- and if theres no instace, we simply make it transparent.
+	end
+end
+local function handleStop() -- Since we use a connection, we can simply just call :Disconnect on it, then destroy preview.
+	heartBeatConnection:Disconnect()
+	heartBeatConnection = nil
+	destroyPreview()
+end
+local function removeCurrentSphere() -- Removes sphere.
+	if currentSphere == nil then return end
+	local Tinfo = TweenInfo.new(
+		.5,
+		Enum.EasingStyle.Back,
+		Enum.EasingDirection.In
+	)
+	local tween = TweenService:Create(currentSphere, Tinfo, {Radius = 0})
+	tween:Play()
+	currentSphere = nil
+end
+UnitFrame.UnitOne.TextButton.Activated:Connect(function() -- For testing purposes, we use the units "Noob" and "BrickBattler"
+	if currentSphere then
+		removeCurrentSphere()
+	end
+	if heartBeatConnection then
+		handleStop()
+	end
+	createPreview("Noob")
+	heartBeatConnection = RunService.Heartbeat:Connect(function()
+		movePreview()
+	end)
+end)
+UnitFrame.UnitTwo.TextButton.Activated:Connect(function()
+	if currentSphere then
+		removeCurrentSphere()
+	end
+	if heartBeatConnection then
+		handleStop()
+	end
+	createPreview("BrickBattler")
+	heartBeatConnection = RunService.Heartbeat:Connect(function()
+		movePreview()
+	end)
+end)
+mouse.Button1Up:Connect(function()
+	if heartBeatConnection then
+		local onTouch = IsOnTouch()
+		if onTouch then
+			movePreview() -- if on mobile, simply move the unit.
+		else
+			local raycast_results = ray_cast({workspace.Preview, player.Character}) -- Same logic as move, however in this case we simply place it.
+			if raycast_results and raycast_results.Instance then
+				local canPlace = checkAvailabilty(raycast_results.Instance)
+				if not canPlace then
+					coroutine.wrap(NoteModule.note)(player, "Placed", 2, "You can't place your unit here!") --place a note using note module.
+				else
+					local unit = workspace.Preview
+					local info = PlaceEvent:InvokeServer(unit:GetAttribute("Unit"), unit.HumanoidRootPart.CFrame) -- calls the place event, passing the cframe.
+					local sphere
+					local currentAttack = UnitData[info.Name]["Upgrades"][1]["Attack"] -- gets current attack, prepare it, since the event returns info about the unit.
+					if currentAttack == "Beam" then
+						sphere = createSphereRange(info.Unit, info.Name)
+					elseif currentAttack == "Cone" then
+						sphere = createConeHandleRange(info.Unit, info.Name)
+					end
+					sphere.Radius = 0
+					sphere.Name = "Range"
+					table.insert(player_units, info) -- add it into the plyer units table.
+				end
+			else
+				coroutine.wrap(NoteModule.note)(player, "Placed", 2, "Oops, somethin went wrong.. Try again?")
+			end
+			handleStop() -- function exlained above
+		end
+	else
+		if currentSphere ~= nil then
+			removeCurrentSphere()
+		end
+		for i, info in pairs(player_units) do
+			if mouse.Target.Parent == info.Unit then
+				if rangeDebounce then
+					NoteModule.note(player, "Range", 1, "Oops! Going too fast on that one, please wait a little bit.") -- spam clicking.
+				else
+					rangeDebounce = true
+					task.delay(1, function()
+						rangeDebounce = false
+					end)
+					local Tinfo = TweenInfo.new(
+						.5,
+						Enum.EasingStyle.Bounce,
+						Enum.EasingDirection.In
+					)
+					local rangev = info.Unit:FindFirstChild("Range")
+					local currentUpgrade = info.Unit:GetAttribute("Upgrade")
+					local range = info.Unit:GetAttribute("Range")
+					if currentSphere == rangev then
+						removeCurrentSphere()
+					else
+						local tween = TweenService:Create(rangev, Tinfo, {Radius = range}) -- cool animation to make it look nice.
+						tween:Play()
+						currentSphere = rangev
+					end
+				end
+			end
+		end
+	end
+end)
+UserInputService.InputBegan:Connect(function(input: InputObject, gameProcessedEvent: boolean)
+	if gameProcessedEvent then return end
+	if input.KeyCode == Enum.KeyCode.Q then -- Q to cancel, R to rotate.
+		if heartBeatConnection then
+			handleStop()
+		end
+	elseif input.KeyCode == Enum.KeyCode.R then
+		coroutine.wrap(rotateUnit)()
+	end
+end)
+loadViewport(player.EquippedUnits.UnitOne, UnitSelection.Frame.UnitOne.ViewportFrame, UnitSelection.Frame.UnitOne.Price)
+loadViewport(player.EquippedUnits.UnitTwo, UnitSelection.Frame.UnitTwo.ViewportFrame, UnitSelection.Frame.UnitTwo.Price)
+loadViewport(player.EquippedUnits.UnitThree, UnitSelection.Frame.UnitThree.ViewportFrame, UnitSelection.Frame.UnitThree.Price)
+loadViewport(player.EquippedUnits.UnitFour, UnitSelection.Frame.UnitFour.ViewportFrame, UnitSelection.Frame.UnitFour.Price)
