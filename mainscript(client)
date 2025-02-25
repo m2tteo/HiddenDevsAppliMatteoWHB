@@ -9,7 +9,7 @@ local player = game:GetService("Players").LocalPlayer
 local mouse = player:GetMouse()
 local UnitData = require(ReplicatedStorage.Common.UnitsData)
 local PlayerGui = player.PlayerGui
-local UnitSelection = PlayerGui:WaitForChild("UnitSelection")
+local UnitSelection = PlayerGui:WaitForChild("Game"):WaitForChild("UnitSelection")
 local UnitFrame = UnitSelection:WaitForChild("Frame")
 local UnitMobile = UnitSelection:WaitForChild("MobilePlacing")
 local heartBeatConnection
@@ -50,7 +50,6 @@ local function loadViewport(v: StringValue, viewportFrame: ViewportFrame, priceT
 	local anim = animator:LoadAnimation(animv)
 	anim.Looped = true
 	anim:Play()
-	priceText.Text = "$"..unit_data["Price"]
 end
 -- All we do is, if the part that the unit wants to place on is the path, or if it's __NOT__ the type of the unit (Cliff or ground), then we return false = cant place there.
 local function checkAvailabilty(part: Part)
@@ -319,7 +318,7 @@ UserInputService.InputBegan:Connect(function(input: InputObject, gameProcessedEv
 		coroutine.wrap(rotateUnit)()
 	end
 end)
-loadViewport(player.EquippedUnits.UnitOne, UnitSelection.Frame.UnitOne.ViewportFrame, UnitSelection.Frame.UnitOne.Price)
-loadViewport(player.EquippedUnits.UnitTwo, UnitSelection.Frame.UnitTwo.ViewportFrame, UnitSelection.Frame.UnitTwo.Price)
-loadViewport(player.EquippedUnits.UnitThree, UnitSelection.Frame.UnitThree.ViewportFrame, UnitSelection.Frame.UnitThree.Price)
-loadViewport(player.EquippedUnits.UnitFour, UnitSelection.Frame.UnitFour.ViewportFrame, UnitSelection.Frame.UnitFour.Price)
+loadViewport(player:WaitForChild("EquippedUnits"):WaitForChild("UnitOne"), UnitSelection.Frame.UnitOne.ViewportFrame, UnitSelection.Frame.UnitOne.Price)
+loadViewport(player:WaitForChild("EquippedUnits"):WaitForChild("UnitTwo"), UnitSelection.Frame.UnitTwo.ViewportFrame, UnitSelection.Frame.UnitTwo.Price)
+loadViewport(player:WaitForChild("EquippedUnits"):WaitForChild("UnitThree"), UnitSelection.Frame.UnitThree.ViewportFrame, UnitSelection.Frame.UnitThree.Price)
+loadViewport(player:WaitForChild("EquippedUnits"):WaitForChild("UnitFour"), UnitSelection.Frame.UnitFour.ViewportFrame, UnitSelection.Frame.UnitFour.Price)
